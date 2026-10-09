@@ -20,12 +20,32 @@ const Facilitator = require("../public/facilitator.js");
 const DEFAULT_MODEL = "claude-opus-5-5";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1"]);
-const MODEL_OPS = new Set(["answer", "reflect", "debrief"]);
+const MODEL_OPS = new Set(["answer", "reflect", "debrief", "selftest"]);
 const MAX_BODY_CHARS = 40000;
 const RATE = { windowMs: 10 * 60 * 1000, max: 40 };
 
 class ApiError extends Error {
   constructor(status, error, message) { super(message || error); this.status = status; this.error = error; }
+}
+
+/* ---------- upstream errors ---------- */
+/* Anthropic API failures become specific codes the page can explain. Details go to the function logs;
+   they reach the browser only when DEBUG_ERRORS=1, so a visitor never sees upstream internals. */
+function translateUpstream(e, env) {
+  if (e instanceof ApiError) return e;
+  const s = e && e.status, raw = String((e && e.message) || e || "").slice(0, 500);
+  console.error("anthropic error:", s || "no-status", (e && e.name) || "", raw);
+  let code = "upstream_error", msg = "The model service returned an error.";
+  if (s === 401) { code = "upstream_auth"; msg = "The server's Anthropic API key was rejected."; }
+  else if (s === 403) { code = "upstream_forbidden"; msg = "The server's API key is not allowed to use this model."; }
+  else if (s === 404) { code = "upstream_model"; msg = "The configured model was not found for this key."; }
+  else if (s === 400) { code = "upstream_bad_request"; msg = "The model service rejected the request."; }
+  else if (s === 429) { code = "upstream_rate"; msg = "The model service is rate limiting this key."; }
+  else if (s >= 500 || s === 529) { code = "upstream_busy"; msg = "The model service is busy or unavailable."; }
+  else if (!s) { code = "upstream_unreachable"; msg = "The server could not reach the model service."; }
+  const err = new ApiError(502, code, msg);
+  if (env.DEBUG_ERRORS === "1") err.detail = raw;
+  return err;
 }
 
 /* ---------- model transport ---------- */
@@ -34,7 +54,7 @@ function makeAnthropicAsk(env) {
   const model = env.ANTHROPIC_MODEL || DEFAULT_MODEL;
   const toBlocks = system => system.map(b => b.cache ? { type: "text", text: b.text, cache_control: { type: "ephemeral" } } : { type: "text", text: b.text });
 
-  return async function ask({ system, user, schema, effort, kind }) {
+  async function ask({ system, user, schema, effort, kind }) {
     if (!env.ANTHROPIC_API_KEY) throw new ApiError(503, "not_configured", "The server has no ANTHROPIC_API_KEY.");
     if (!client) {
       const mod = require("@anthropic-ai/sdk");
@@ -63,7 +83,8 @@ function makeAnthropicAsk(env) {
     const block = res.content.find(b => b.type === "text");
     if (!block) throw new ApiError(502, "empty", "The model returned no text.");
     try { return JSON.parse(block.text); } catch (e) { throw new ApiError(502, "invalid_json", "The model reply was not valid JSON."); }
-  };
+  }
+  return async args => { try { return await ask(args); } catch (e) { throw translateUpstream(e, env); } };
 }
 
 /* ---------- progress tokens ---------- */
@@ -83,7 +104,8 @@ function verify(secret, caseId, stage, vars, token) {
 
 /* ---------- handler ---------- */
 function createHandler({ ask, env = process.env, now = Date.now } = {}) {
-  const facilitator = Facilitator.create({ cases, code, ask: ask || makeAnthropicAsk(env) });
+  const askFn = ask || makeAnthropicAsk(env);
+  const facilitator = Facilitator.create({ cases, code, ask: askFn });
   const hits = new Map();
   const secret = progressSecret(env);
   const total = id => (cases.CASES.find(c => c.id === id) || { stages: [] }).stages.length;
@@ -136,6 +158,11 @@ function createHandler({ ask, env = process.env, now = Date.now } = {}) {
         return r;
       };
       switch (op) {
+        case "selftest": { /* one tiny model call: confirms the key, the model name and the request shape */
+          const r = await askFn({ system: [{ type: "text", text: "Reply with the JSON object {\"ok\": true}." }], user: "ping", kind: "selftest", effort: "low",
+            schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } } });
+          return send(200, { ok: !!(r && r.ok), model: env.ANTHROPIC_MODEL || DEFAULT_MODEL });
+        }
         case "cases": return send(200, { cases: facilitator.listCases(), topics: facilitator.topics() });
         case "stage": return send(200, facilitator.getStage({ caseId, stage: idx, vars }));
         case "answer": return send(200, withNext(await facilitator.answer({ caseId, stage: idx, vars, answer: body.answer, facts: body.facts, turns: body.turns, clarifyCount: body.clarifyCount })));
@@ -145,9 +172,11 @@ function createHandler({ ask, env = process.env, now = Date.now } = {}) {
       }
     } catch (e) {
       const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
-      if (status >= 500 && !(e instanceof ApiError)) console.error("facilitate error:", e && e.message);
+      if (status >= 500 && !(e instanceof ApiError)) console.error("facilitate error:", e && e.stack || e);
       const error = e.error || (status === 429 ? "rate_limited" : status === 401 ? "upstream_auth" : status >= 500 ? "server_error" : "bad_request");
-      return res.status(status).json({ error, message: e instanceof ApiError || status < 500 ? e.message : "The facilitator ran into a problem. Please try again." });
+      const body = { error, message: e instanceof ApiError || status < 500 ? e.message : "The facilitator ran into a problem. Please try again." };
+      if (e.detail) body.detail = e.detail;
+      return res.status(status).json(body);
     }
   };
 }
@@ -156,4 +185,5 @@ let shared;
 module.exports = (req, res) => (shared || (shared = createHandler()))(req, res);
 module.exports.createHandler = createHandler;
 module.exports.sign = sign;
+module.exports.translateUpstream = translateUpstream;
 module.exports.progressSecret = progressSecret;

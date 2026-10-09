@@ -35,7 +35,7 @@ function remoteBackend() {
       res = await fetch("/api/facilitate", { method: "POST", headers: { "Content-Type": "application/json", "x-access-code": accessCode }, body: JSON.stringify(body) });
     } catch (e) { throw new BackendError("network", "Could not reach the server."); }
     let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
-    if (!res.ok) throw new BackendError((data && data.error) || "server_error", data && data.message);
+    if (!res.ok) throw new BackendError((data && data.error) || "http_" + res.status, data && data.message);
     return data;
   }
   return {
@@ -96,8 +96,15 @@ function friendly(e) {
   if (c === "access_code_required") return "The access code was not accepted. Reload the page to enter it again.";
   if (c === "network") return "I could not reach the server. Check your connection and send your answer again.";
   if (c === "sample_not_granted" || c === "sample_sampling_disabled" || c === "sample_capability_disabled") return "Claude is not available for this view, so the live facilitator cannot answer.";
+  if (c === "upstream_auth") return "The facilitator's connection to Claude was rejected. The site owner needs to check the ANTHROPIC_API_KEY in Vercel (error: upstream_auth).";
+  if (c === "upstream_forbidden") return "This key is not allowed to use the configured model. The site owner needs to check ANTHROPIC_API_KEY or ANTHROPIC_MODEL (error: upstream_forbidden).";
+  if (c === "upstream_model") return "The configured model was not found for this key. The site owner can set ANTHROPIC_MODEL to a model the key can use (error: upstream_model).";
+  if (c === "upstream_bad_request") return "Claude rejected the request. The site owner can check the Vercel function logs (error: upstream_bad_request).";
+  if (c === "upstream_rate" || c === "upstream_busy") return "Claude is busy right now. Please wait a moment and send your answer again.";
+  if (c === "upstream_unreachable") return "The server could not reach Claude. Please try again in a minute (error: upstream_unreachable).";
+  if (c && c.startsWith("http_5")) return "The server timed out or crashed while answering. Try again; if it repeats, the site owner should check the Vercel function logs (error: " + c + ").";
   if (c === "sample_invalid_json" || c === "invalid_json" || c === "truncated") return "I could not put together a reliable reply that time. Please send your answer again.";
-  return "Something went wrong on my side. Please send your answer again.";
+  return "Something went wrong on my side" + (c ? " (error: " + c + ")" : "") + ". Please send your answer again.";
 }
 
 /* ---------- messages ---------- */

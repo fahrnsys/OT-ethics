@@ -184,3 +184,23 @@ test("no case text is in the folder that is served statically", () => {
     for (const word of secrets) assert.ok(!text.includes(word), `${f} contains "${word}"`);
   }
 });
+
+/* ---------- upstream errors ---------- */
+test("upstream failures become specific codes and never leak details by default", () => {
+  const { translateUpstream } = require("../api/facilitate.js");
+  const quiet = console.error; console.error = () => {};
+  try {
+    const cases = [[401, "upstream_auth"], [403, "upstream_forbidden"], [404, "upstream_model"], [400, "upstream_bad_request"], [429, "upstream_rate"], [500, "upstream_busy"], [529, "upstream_busy"], [undefined, "upstream_unreachable"]];
+    for (const [status, code] of cases) {
+      const e = translateUpstream({ status, message: "secret upstream detail" }, {});
+      assert.equal(e.error, code); assert.equal(e.status, 502); assert.equal(e.detail, undefined); assert.ok(!e.message.includes("secret"));
+    }
+    assert.equal(translateUpstream({ status: 400, message: "bad effort" }, { DEBUG_ERRORS: "1" }).detail, "bad effort");
+  } finally { console.error = quiet; }
+});
+
+test("selftest makes one rate-limited model call and reports the model", async () => {
+  const h = createHandler({ ask: async () => ({ ok: true }), env: { ...env, ANTHROPIC_MODEL: "claude-test" } });
+  const r = await call(h, { op: "selftest" });
+  assert.deepEqual(r.body, { ok: true, model: "claude-test" });
+});
