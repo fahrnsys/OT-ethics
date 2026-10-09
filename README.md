@@ -7,7 +7,7 @@ The participant answers in their own words. A model probes, then judges the answ
 ## How the live facilitator stays inside the Code
 - The Principles, Core Values, and Standards of Conduct are loaded verbatim (`code.js`) and are the only authority the model is given. Rules in the system prompt forbid citing anything else (HIPAA, CMS, NBCOT, state law).
 - Every citation is checked against the loaded Code. Unknown ids are dropped, sentences that cite an unknown standard are removed, and the wording shown for each citation comes from `code.js`, never from the model.
-- Each stage has authored reference responses (`cases.js`). When an answer matches one, the authored verdict, anchors, consequence, and case variables are used, so live play stays consistent with the scripted cases. Otherwise the model judges against the Code and writes one grounded consequence.
+- Each stage has authored reference responses (`cases.js`). When an answer matches one, the authored verdict, anchors, consequence, and case variables are used, so live play stays consistent across answers. Otherwise the model judges against the Code and writes one grounded consequence.
 - The facilitator asks at most two clarifying questions per stage before it must judge. A vague answer gets a question, not a verdict.
 - Where a decision turns on law, payer rules, capacity, or policy, the reply carries a "Beyond the Code" note that sends the participant to compliance, the state board, counsel, an ethics committee, or the AOTA Ethics Commission.
 - Participant text is passed to the model as quoted data, never as instructions.
