@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Connection Check</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { overflow: auto; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  .row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  .row b { display: block; margin-bottom: 2px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--line); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.mid { background: var(--mid); }
+  ol { margin: 6px 0 0; padding-left: 20px; } li { margin: 3px 0; }
+  code { font-family: var(--font-code); font-size: 13px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  input { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 8px 10px; font: inherit; }
+</style>
+<div class="wrap">
+  <h1>Connection check</h1>
+  <p class="lead">This runs two quick tests and tells you what to fix. It makes one very small request to Claude.</p>
+  <div id="codebox" hidden><label for="code">Access code</label><br><input id="code" type="password" autocomplete="off"></div>
+  <div><button class="btn primary" id="run" type="button">Run the check</button> <a class="btn" href="index.html" style="text-decoration:none">Back to the facilitator</a></div>
+  <div id="out" style="display:flex;flex-direction:column;gap:10px"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const FIX = {
+  upstream_auth: ["The key was rejected", "Claude did not accept the API key stored in Vercel.", ["Go to the Anthropic Console and create a new API key (it should start with <code>sk-ant-api</code>).", "In Vercel, open Settings, then Environment Variables, and replace the value of <code>ANTHROPIC_API_KEY</code>.", "Redeploy the project in Vercel, then run this check again."]],
+  upstream_model: ["The model was not found", "The key works, but it cannot use the model this site asks for.", ["In Vercel, add an environment variable <code>ANTHROPIC_MODEL</code> with the value <code>claude-sonnet-5-5</code>.", "Redeploy, then run this check again."]],
+  upstream_forbidden: ["The key is not allowed to use this model", "The key is valid but lacks permission.", ["In the Anthropic Console, check that the key's workspace can use Claude models.", "Or add <code>ANTHROPIC_MODEL</code> in Vercel with <code>claude-sonnet-5-5</code>, redeploy, and check again."]],
+  upstream_bad_request: ["Claude rejected the request", "The key and model were accepted, but the request itself was refused.", ["In Vercel, add an environment variable <code>DEBUG_ERRORS</code> with the value <code>1</code>, then redeploy.", "Run this check again. The reason will appear below. Send it to whoever built this site, then remove <code>DEBUG_ERRORS</code>."]],
+  upstream_rate: ["Claude is rate limiting this key", "Too many requests, or the account has hit a limit.", ["Wait a few minutes and run the check again.", "In the Anthropic Console, check the account's usage limits and billing."]],
+  upstream_busy: ["Claude is busy", "A temporary problem on Claude's side.", ["Wait a minute and run the check again."]],
+  upstream_unreachable: ["The server could not reach Claude", "A temporary network problem.", ["Run the check again in a minute."]],
+  rate_limited: ["Too many checks", "Wait a few minutes and run it again.", []],
+  access_code_required: ["Access code needed", "Enter the access code above and run the check again.", []],
+  not_configured: ["No API key is set", "The site has no <code>ANTHROPIC_API_KEY</code>.", ["In Vercel, open Settings, then Environment Variables, and add <code>ANTHROPIC_API_KEY</code> for Production.", "Redeploy the project, then run this check again."]]
+};
+function row(state, title, body, steps, detail) {
+  const d = document.createElement("div"); d.className = "row";
+  d.innerHTML = `<span class="dot ${state}"></span><div><b></b><span class="msg"></span></div>`;
+  d.querySelector("b").textContent = title; d.querySelector(".msg").innerHTML = body;
+  if (steps && steps.length) { const ol = document.createElement("ol"); steps.forEach(s => { const li = document.createElement("li"); li.innerHTML = s; ol.appendChild(li); }); d.querySelector("div").appendChild(ol); }
+  if (detail) { const p = document.createElement("p"); p.style.cssText = "margin:8px 0 0;font-family:var(--font-code);font-size:12px;overflow-wrap:anywhere"; p.textContent = detail; d.querySelector("div").appendChild(p); }
+  $("out").appendChild(d); return d;
+}
+async function post(body) {
+  const code = $("code").value.trim();
+  let res; try { res = await fetch("/api/facilitate", { method: "POST", headers: { "Content-Type": "application/json", "x-access-code": code }, body: JSON.stringify(body) }); }
+  catch (e) { return { status: 0, data: {} }; }
+  let data = {}; try { data = await res.json(); } catch (e) { /* not JSON */ }
+  return { status: res.status, data };
+}
+$("run").addEventListener("click", async () => {
+  $("out").innerHTML = ""; $("run").disabled = true;
+  try {
+    const a = await post({ op: "ping" });
+    if (!a.status) return row("bad", "The site's server did not answer", "The page could not reach <code>/api/facilitate</code>.", ["Check that the latest deployment in Vercel shows Ready.", "Open the Vercel project, then Logs, and look for errors.", "Reload this page and try again."]);
+    if (a.status === 404) return row("bad", "The server function is missing", "This address has no <code>/api/facilitate</code>.", ["In Vercel, check that the project is connected to the right repository and the latest deployment shows Ready."]);
+    row("ok", "The site's server is running", "The page reached the server.");
+    if (a.data.codeRequired) { $("codebox").hidden = false; if (!$("code").value.trim()) return row("mid", ...FIX.access_code_required.slice(0, 2), []); }
+    if (!a.data.configured) { const f = FIX.not_configured; return row("bad", f[0], f[1], f[2]); }
+    row("ok", "An API key is set", "The server has a key. Now testing it with Claude.");
+    const t = await post({ op: "selftest" });
+    if (t.data && t.data.ok) return row("ok", "Everything works", `Claude answered using <code>${(t.data.model || "").replace(/[<>&]/g, "")}</code>. You can go back to the facilitator.`);
+    const f = FIX[t.data && t.data.error];
+    if (f) return row("bad", f[0], f[1], f[2], t.data.detail);
+    row("bad", "Something else went wrong", "The server returned an error this page does not recognize.", ["Open the Vercel project, then Logs, and look at the most recent error.", "Send that message to whoever built this site."], t.status ? `HTTP ${t.status} ${t.data && t.data.error ? t.data.error : ""}` : "No response");
+  } finally { $("run").disabled = false; }
+});
+</script>

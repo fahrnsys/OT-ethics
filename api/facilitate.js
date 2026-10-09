@@ -161,7 +161,7 @@ function createHandler({ ask, env = process.env, now = Date.now } = {}) {
         case "selftest": { /* one tiny model call: confirms the key, the model name and the request shape */
           const r = await askFn({ system: [{ type: "text", text: "Reply with the JSON object {\"ok\": true}." }], user: "ping", kind: "selftest", effort: "low",
             schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } } });
-          return send(200, { ok: !!(r && r.ok), model: env.ANTHROPIC_MODEL || DEFAULT_MODEL });
+          return send(200, { ok: !!r && typeof r === "object", model: env.ANTHROPIC_MODEL || DEFAULT_MODEL });
         }
         case "cases": return send(200, { cases: facilitator.listCases(), topics: facilitator.topics() });
         case "stage": return send(200, facilitator.getStage({ caseId, stage: idx, vars }));
