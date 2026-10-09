@@ -6,7 +6,7 @@
  *    attached from the Code text, never taken from the model;
  *  - sentences that cite an unknown standard are dropped;
  *  - when an answer matches an authored reference response, the authored verdict, anchors, consequence,
- *    and case variables are used, so live play stays consistent with the scripted cases;
+ *    and case variables are used, so live play stays consistent with the authored reference responses;
  *  - the number of clarifying questions per stage is capped. */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -117,6 +117,12 @@
       return out;
     };
 
+    function applyVars(vars, set, inc) {
+      const v = Object.assign({}, vars, set || {});
+      for (const [k, n] of Object.entries(inc || {})) v[k] = (Number(v[k]) || 0) + n;
+      return cleanVars(v);
+    }
+
     function listCases() {
       return CASES.map(c => ({
         id: c.id, title: c.title, setting: c.setting, blurb: c.blurb, stages: c.stages.length,
@@ -196,7 +202,9 @@
       const call = (extra) => ask({ system: system(ctx), user: user + (extra ? "\n\n" + extra : ""), schema: SCHEMAS.answer, kind: "answer", effort: "medium", ctx: { options: st.options, answer: a, clarifyCount: used, prior } });
       let r = await call();
       if (used >= LIMITS.clarify && r.status !== "assess") r = await call("Reminder: status must be assess.");
-      return normalizeAnswer(r, st, used);
+      const out = normalizeAnswer(r, st, used);
+      if (out.kind === "assess") out.nextVars = applyVars(cleanVars(vars), out.set, out.inc);
+      return out;
     }
 
     function normalizeAnswer(r, st, used) {
@@ -267,7 +275,7 @@
       };
     }
 
-    return { listCases, topics, getStage, answer, reflect, debrief, LIMITS, _internal: { scrub, normalizeAnswer, cleanVars, CODE_TEXT, RULES } };
+    return { listCases, topics, getStage, answer, reflect, debrief, applyVars, LIMITS, _internal: { scrub, normalizeAnswer, cleanVars, CODE_TEXT, RULES } };
   }
 
   return { create, LIMITS };

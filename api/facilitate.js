@@ -7,12 +7,15 @@
  *   answer   -> free-text answer, judged against the Code
  *   reflect  -> reply to the probing question
  *   debrief  -> closing summary
- * Environment: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (optional), ACCESS_CODE (optional). */
+ * Progress gate: stage 0 is open. Stage N needs a token that this function signed when the participant's answer to
+ * stage N-1 was assessed, so the later stages of a case cannot be read by calling the API out of order.
+ * Environment: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (optional), ACCESS_CODE (optional),
+ *              PROGRESS_SECRET (optional; defaults to a key derived from ANTHROPIC_API_KEY). */
 
 const crypto = require("crypto");
-const code = require("../code.js");
-const cases = require("../cases.js");
-const Facilitator = require("../facilitator.js");
+const code = require("../public/code.js");
+const cases = require("../server/cases.js");   // server-only: never served as a static file
+const Facilitator = require("../public/facilitator.js");
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
@@ -63,10 +66,27 @@ function makeAnthropicAsk(env) {
   };
 }
 
+/* ---------- progress tokens ---------- */
+function progressSecret(env) {
+  if (env.PROGRESS_SECRET) return env.PROGRESS_SECRET;
+  if (env.ANTHROPIC_API_KEY) return crypto.createHash("sha256").update("progress:" + env.ANTHROPIC_API_KEY).digest("hex");
+  return progressSecret.fallback || (progressSecret.fallback = crypto.randomBytes(32).toString("hex"));
+}
+const canon = vars => JSON.stringify(Object.keys(vars || {}).sort().map(k => [k, vars[k]]));
+function sign(secret, caseId, stage, vars) {
+  return crypto.createHmac("sha256", secret).update(`${caseId}|${stage}|${canon(vars)}`).digest("hex");
+}
+function verify(secret, caseId, stage, vars, token) {
+  const want = Buffer.from(sign(secret, caseId, stage, vars)), got = Buffer.from(String(token || ""));
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
 /* ---------- handler ---------- */
 function createHandler({ ask, env = process.env, now = Date.now } = {}) {
   const facilitator = Facilitator.create({ cases, code, ask: ask || makeAnthropicAsk(env) });
   const hits = new Map();
+  const secret = progressSecret(env);
+  const total = id => (cases.CASES.find(c => c.id === id) || { stages: [] }).stages.length;
 
   function limited(ip) {
     const t = now(), list = (hits.get(ip) || []).filter(x => t - x < RATE.windowMs);
@@ -102,12 +122,25 @@ function createHandler({ ask, env = process.env, now = Date.now } = {}) {
       }
 
       const idx = Number.isInteger(body.stage) ? body.stage : -1;
+      const caseId = String(body.caseId);
+
+      /* stage, answer and reflect only work for a stage the participant has reached */
+      let vars = body.vars;
+      if (op === "stage" || op === "answer" || op === "reflect") {
+        if (idx === 0) vars = {};
+        else if (!verify(secret, caseId, idx, vars, body.token)) throw new ApiError(403, "stage_locked", "Answer the earlier stages to unlock this one.");
+      }
+      /* the signed token for the next stage is minted only when an answer to this stage is assessed */
+      const withNext = r => {
+        if (r.kind === "assess" && idx + 1 < total(caseId)) r.next = { stage: idx + 1, vars: r.nextVars, token: sign(secret, caseId, idx + 1, r.nextVars) };
+        return r;
+      };
       switch (op) {
         case "cases": return send(200, { cases: facilitator.listCases(), topics: facilitator.topics() });
-        case "stage": return send(200, facilitator.getStage({ caseId: String(body.caseId), stage: idx, vars: body.vars }));
-        case "answer": return send(200, await facilitator.answer({ caseId: String(body.caseId), stage: idx, vars: body.vars, answer: body.answer, facts: body.facts, turns: body.turns, clarifyCount: body.clarifyCount }));
-        case "reflect": return send(200, await facilitator.reflect({ caseId: String(body.caseId), stage: idx, vars: body.vars, text: body.text, facts: body.facts, assessment: body.assessment, count: body.count }));
-        case "debrief": return send(200, await facilitator.debrief({ caseId: String(body.caseId), picks: body.picks, notes: body.notes, principles: body.principles }));
+        case "stage": return send(200, facilitator.getStage({ caseId, stage: idx, vars }));
+        case "answer": return send(200, withNext(await facilitator.answer({ caseId, stage: idx, vars, answer: body.answer, facts: body.facts, turns: body.turns, clarifyCount: body.clarifyCount })));
+        case "reflect": return send(200, await facilitator.reflect({ caseId, stage: idx, vars, text: body.text, facts: body.facts, assessment: body.assessment, count: body.count }));
+        case "debrief": return send(200, await facilitator.debrief({ caseId, picks: body.picks, notes: body.notes, principles: body.principles }));
         default: throw new ApiError(400, "bad_request", "Unknown operation.");
       }
     } catch (e) {
@@ -122,3 +155,5 @@ function createHandler({ ask, env = process.env, now = Date.now } = {}) {
 let shared;
 module.exports = (req, res) => (shared || (shared = createHandler()))(req, res);
 module.exports.createHandler = createHandler;
+module.exports.sign = sign;
+module.exports.progressSecret = progressSecret;

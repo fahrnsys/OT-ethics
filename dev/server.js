@@ -3,6 +3,7 @@
    `npm run dev:mock` (MOCK=1) uses the deterministic mock, no key needed. */
 const http = require("http"), fs = require("fs"), path = require("path");
 const root = path.join(__dirname, "..");
+const pub = path.join(root, "public");   // only this folder is static; server/ and api/ are never served
 
 try { /* minimal .env loader */
   for (const line of fs.readFileSync(path.join(root, ".env"), "utf8").split("\n")) {
@@ -29,8 +30,8 @@ http.createServer((req, res) => {
     return;
   }
   let p = decodeURIComponent(req.url.split("?")[0]); if (p === "/") p = "/index.html";
-  const f = path.join(root, path.normalize(p));
-  if (!f.startsWith(root) || f.includes("node_modules") || /\/(\.|dev\/|test\/|api\/)/.test(p)) { res.statusCode = 404; return res.end("Not found"); }
+  const f = path.join(pub, path.normalize(p));
+  if (!f.startsWith(pub + path.sep)) { res.statusCode = 404; return res.end("Not found"); }
   fs.readFile(f, (err, data) => {
     if (err) { res.statusCode = 404; return res.end("Not found"); }
     res.setHeader("Content-Type", TYPES[path.extname(f)] || "application/octet-stream"); res.end(data);

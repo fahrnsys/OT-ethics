@@ -3,8 +3,8 @@
  * Two backends share one interface (cases, stage, answer, reflect, debrief):
  *   remote  - POST /api/facilitate on the server that holds the API key and the later stages of each case
  *   sample  - inside a Claude artifact, the page asks Claude through its `sample` capability and runs the same
- *             facilitator core in the browser
- * The scripted version (scripted.html) needs neither. */
+ *             facilitator core in the browser (case data is published to that private page)
+ * On the server, later stages are released only against a signed progress token (see api/facilitate.js). */
 const V = { ok: "Aligned with the Code", mid: "Partly aligned", bad: "Conflicts with the Code" };
 const $ = id => document.getElementById(id);
 const stream = $("stream"), factsEl = $("facts"), anchorsEl = $("anchors"), freeEl = $("free"), sendBtn = $("send");
@@ -92,9 +92,10 @@ function friendly(e) {
   const c = e && e.code;
   if (c === "rate_limited" || c === "sample_rate_limited") return "Too many requests in a short time. Please wait a few minutes and try again.";
   if (c === "refused" || c === "sample_refused") return "I can't help with that request. Describe what you would do in the case, and I will respond through the Code.";
+  if (c === "stage_locked") return "That stage is not unlocked yet. Please restart the case from the library.";
   if (c === "access_code_required") return "The access code was not accepted. Reload the page to enter it again.";
   if (c === "network") return "I could not reach the server. Check your connection and send your answer again.";
-  if (c === "sample_not_granted" || c === "sample_sampling_disabled" || c === "sample_capability_disabled") return "Claude is not available for this view, so the live facilitator cannot answer. The scripted version still works.";
+  if (c === "sample_not_granted" || c === "sample_sampling_disabled" || c === "sample_capability_disabled") return "Claude is not available for this view, so the live facilitator cannot answer.";
   if (c === "sample_invalid_json" || c === "invalid_json" || c === "truncated") return "I could not put together a reliable reply that time. Please send your answer again.";
   return "Something went wrong on my side. Please send your answer again.";
 }
@@ -172,7 +173,6 @@ function renderNotice(title, html) {
   const lib = $("library"); lib.innerHTML = "";
   const card = el("div", "card"); card.style.maxWidth = "560px";
   card.append(el("h3", null, esc(title)), el("p", null, html));
-  const a = el("a", "btn primary", "Open the scripted version"); a.href = "scripted.html"; a.style.textDecoration = "none"; card.appendChild(a);
   lib.appendChild(card);
 }
 function renderCodeGate(remote) {
@@ -195,7 +195,7 @@ function renderCodeGate(remote) {
 /* ---------- play ---------- */
 async function startCase(id) {
   C = catalog.cases.find(c => c.id === id); epoch++; mode = "busy";
-  S = { stage: 0, total: C.stages, v: {}, picks: [], anchors: new Set(), notes: [], facts: [], factCount: 0, turns: [], clarify: 0, reflections: 0, assessment: null };
+  S = { stage: 0, total: C.stages, v: {}, token: "", pending: null, picks: [], anchors: new Set(), notes: [], facts: [], factCount: 0, turns: [], clarify: 0, reflections: 0, assessment: null };
   setView("chat"); $("sub").textContent = `${C.title} · ${C.setting}`; $("beyondNote").textContent = BEYOND_NOTE;
   stream.innerHTML = ""; factsEl.innerHTML = '<li class="empty">Nothing revealed yet.</li>'; anchorsEl.innerHTML = '<span class="empty">None yet.</span>';
   $("tabFile").textContent = "Case file"; tab("chat"); setComposer("Waiting for the case…", false);
@@ -205,7 +205,7 @@ async function startCase(id) {
 async function runStage() {
   const my = epoch; mode = "busy"; renderProgress(); setComposer("Reading the case…", false);
   let st;
-  try { st = await backend.stage({ caseId: C.id, stage: S.stage, vars: S.v }); }
+  try { st = await backend.stage({ caseId: C.id, stage: S.stage, vars: S.v, token: S.token }); }
   catch (e) { stream.appendChild(sayText(friendly(e))); scroll(); return; }
   S.stageKey = st.key;
   for (const n of st.narrative) {
@@ -221,7 +221,7 @@ async function handleAnswer(text) {
   mode = "busy"; setComposer("Thinking…", false);
   const my = epoch, t = typing();
   let r;
-  try { r = await backend.answer({ caseId: C.id, stage: S.stage, vars: S.v, answer: text, facts: S.facts, turns: S.turns, clarifyCount: S.clarify }); }
+  try { r = await backend.answer({ caseId: C.id, stage: S.stage, vars: S.v, token: S.token, answer: text, facts: S.facts, turns: S.turns, clarifyCount: S.clarify }); }
   catch (e) {
     t.remove(); if (my !== epoch) return;
     stream.appendChild(sayText(friendly(e))); scroll();
@@ -239,7 +239,8 @@ async function handleAnswer(text) {
   }
 
   /* an assessment: verdict, feedback, Code anchors, then a probing question */
-  Object.assign(S.v, r.set || {}); Object.entries(r.inc || {}).forEach(([k, n]) => { S.v[k] = (S.v[k] || 0) + n; });
+  /* the next stage opens only when the participant continues; remote play gets a signed token for it */
+  S.pending = r.next ? { vars: r.next.vars, token: r.next.token } : { vars: r.nextVars || S.v, token: "" };
   S.picks.push({ stage: S.stageKey || `Stage ${S.stage + 1}`, label: text, verdict: r.verdict, anchors: r.anchors.map(a => a.id) });
   addAnchors(r.anchors); S.assessment = { message: r.message, probe: r.probe };
 
@@ -256,7 +257,9 @@ async function handleAnswer(text) {
   const go = el("div", "options"), last = S.stage + 1 >= S.total;
   const nb = el("button", "opt", last ? "Continue to the debrief" : "Continue to the next stage"); nb.type = "button"; nb.style.fontWeight = "600";
   nb.addEventListener("click", () => {
-    if (mode !== "reflect") return; nb.disabled = true; stream.appendChild(userNode("Continue")); S.stage++;
+    if (mode !== "reflect") return; nb.disabled = true; stream.appendChild(userNode("Continue"));
+    if (S.pending) { S.v = S.pending.vars; S.token = S.pending.token; S.pending = null; }
+    S.stage++;
     S.stage < S.total ? runStage() : runDebrief();
   });
   go.appendChild(nb); stream.appendChild(go); scroll();
@@ -269,7 +272,7 @@ async function handleReflect(text) {
   mode = "busy"; setComposer("Thinking…", false);
   const my = epoch, t = typing();
   try {
-    const r = await backend.reflect({ caseId: C.id, stage: S.stage, vars: S.v, text, facts: S.facts, assessment: S.assessment, count: S.reflections });
+    const r = await backend.reflect({ caseId: C.id, stage: S.stage, vars: S.v, token: S.token, text, facts: S.facts, assessment: S.assessment, count: S.reflections });
     t.remove(); if (my !== epoch) return; S.reflections++;
     const m = sayText(r.message); if (r.anchors && r.anchors.length) { const c = chipRow(r.anchors); c.style.marginTop = "8px"; m.lastChild.appendChild(c); }
     stream.appendChild(m); scroll();
@@ -376,8 +379,8 @@ $("btnLib").addEventListener("click", () => { if (backend && catalog.cases.lengt
 (async function boot() {
   setView("library"); $("library").innerHTML = '<p class="lead">Connecting to the facilitator…</p>';
   const b = await detectBackend();
-  if (b.failed === "not_configured") return renderNotice("The live facilitator is not set up yet", "This server has no API key configured. An administrator needs to set <code>ANTHROPIC_API_KEY</code>. The scripted version works without it.");
-  if (b.failed) return renderNotice("The live facilitator is unavailable", "I could not reach the facilitator service. You can still work through the same cases in the scripted version.");
+  if (b.failed === "not_configured") return renderNotice("The live facilitator is not set up yet", "This server has no API key configured. An administrator needs to set <code>ANTHROPIC_API_KEY</code>. Once it is set and the site is redeployed, this page will work.");
+  if (b.failed) return renderNotice("The live facilitator is unavailable", "I could not reach the facilitator service. Check your connection and reload the page.");
   if (b.needsCode) return renderCodeGate(b.remote);
   try { backend = b; catalog = await backend.cases(); } catch (e) { return renderNotice("The live facilitator is unavailable", friendly(e)); }
   renderLibrary();

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const code = require("../code.js"), cases = require("../cases.js"), Facilitator = require("../facilitator.js");
+const code = require("../public/code.js"), cases = require("../server/cases.js"), Facilitator = require("../public/facilitator.js");
 const mock = require("../dev/mock-model.js");
 const { createHandler } = require("../api/facilitate.js");
 
@@ -97,7 +97,7 @@ test("handler: ping, cases, stage", async () => {
   const h = createHandler({ ask: mock, env });
   assert.deepEqual((await call(h, { op: "ping" })).body, { ok: true, configured: true, codeRequired: false });
   assert.equal((await call(h, { op: "cases" })).body.cases.length, cases.CASES.length);
-  assert.equal((await call(h, { op: "stage", caseId: "census", stage: 2, vars: {} })).status, 200);
+  assert.equal((await call(h, { op: "stage", caseId: "census", stage: 0, vars: {} })).status, 200);
 });
 
 test("handler: rejects bad methods, bodies, and unknown ops", async () => {
@@ -130,4 +130,57 @@ test("handler: a missing API key is a clear 503, not a crash", async () => {
   const h = createHandler({ env: {} });
   const r = await call(h, { op: "answer", caseId: "home", stage: 0, answer: "I would ask him first about who to tell." });
   assert.equal(r.status, 503); assert.equal(r.body.error, "not_configured");
+});
+
+/* ---------- progress gate and static exposure ---------- */
+const fs = require("node:fs"), path = require("node:path");
+
+test("later stages are locked until the earlier stage is answered", async () => {
+  const h = createHandler({ ask: mock, env });
+  for (const op of [{ op: "stage" }, { op: "answer", answer: "I would talk with him first." }, { op: "reflect", text: "ok", assessment: {} }]) {
+    const r = await call(h, { ...op, caseId: "census", stage: 2, vars: {} });
+    assert.equal(r.status, 403, op.op); assert.equal(r.body.error, "stage_locked");
+  }
+  const r = await call(h, { op: "stage", caseId: "census", stage: 2, vars: {}, token: "00" });
+  assert.equal(r.status, 403);
+});
+
+test("answering a stage mints a signed token for the next stage only", async () => {
+  const h = createHandler({ ask: mock, env });
+  const a = await call(h, { op: "answer", caseId: "home", stage: 0, vars: {}, answer: "I would talk with Mr. Okafor first and ask who he wants informed about his care.", facts: [], turns: [], clarifyCount: 0 });
+  assert.equal(a.status, 200); assert.equal(a.body.kind, "assess");
+  const { stage, vars, token } = a.body.next;
+  assert.equal(stage, 1);
+  assert.equal((await call(h, { op: "stage", caseId: "home", stage: 1, vars, token })).status, 200);            // unlocked
+  assert.equal((await call(h, { op: "stage", caseId: "home", stage: 2, vars, token })).status, 403);            // not the one after
+  assert.equal((await call(h, { op: "stage", caseId: "home", stage: 1, vars: { ...vars, confided: !vars.confided }, token })).status, 403); // vars tampered
+  assert.equal((await call(h, { op: "stage", caseId: "census", stage: 1, vars, token })).status, 403);          // other case
+});
+
+test("tokens from one server secret do not open another", async () => {
+  const a = createHandler({ ask: mock, env: { ...env, PROGRESS_SECRET: "one" } });
+  const b = createHandler({ ask: mock, env: { ...env, PROGRESS_SECRET: "two" } });
+  const r = await call(a, { op: "answer", caseId: "home", stage: 0, vars: {}, answer: "I would talk with Mr. Okafor first and ask who he wants informed.", facts: [], turns: [], clarifyCount: 0 });
+  const { vars, token } = r.body.next;
+  assert.equal((await call(b, { op: "stage", caseId: "home", stage: 1, vars, token })).status, 403);
+});
+
+test("the last stage has no next token", async () => {
+  const h = createHandler({ ask: mock, env });
+  const c = cases.CASES.find(x => x.id === "fieldwork"), last = c.stages.length - 1;
+  const { sign, progressSecret } = require("../api/facilitate.js");
+  const token = sign(progressSecret(env), "fieldwork", last, {});
+  const r = await call(h, { op: "answer", caseId: "fieldwork", stage: last, vars: {}, token, answer: c.stages[last].options[0].label, facts: [], turns: [], clarifyCount: 0 });
+  assert.equal(r.status, 200); assert.equal(r.body.kind, "assess"); assert.equal(r.body.next, undefined);
+});
+
+test("no case text is in the folder that is served statically", () => {
+  const pub = path.join(__dirname, "..", "public");
+  const secrets = ["Walter Okafor", "fell on the stairs", "Mateo", "Cedar Ridge", "Tasha", "Dev ", "Reference responses", "feedback:"];
+  const files = fs.readdirSync(pub);
+  assert.ok(files.includes("index.html") && !files.includes("cases.js"));
+  for (const f of files) {
+    const text = fs.readFileSync(path.join(pub, f), "utf8");
+    for (const word of secrets) assert.ok(!text.includes(word), `${f} contains "${word}"`);
+  }
 });

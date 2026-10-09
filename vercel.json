@@ -1,5 +1,9 @@
 {
+  "outputDirectory": "public",
   "functions": {
-    "api/facilitate.js": { "maxDuration": 60 }
+    "api/facilitate.js": {
+      "maxDuration": 60,
+      "includeFiles": "{server,public}/*.js"
+    }
   }
 }
