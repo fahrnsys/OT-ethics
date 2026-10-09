@@ -1,0 +1,15 @@
+{
+  "name": "ot-ethics-chatbot",
+  "version": "0.2.0",
+  "private": true,
+  "description": "OT ethics case facilitator bounded to the AOTA 2025 Code of Ethics",
+  "scripts": {
+    "dev": "node dev/server.js",
+    "dev:mock": "MOCK=1 node dev/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -83,3 +83,5 @@ const STD = {
 
 /* Where the Code stops. Shown in the Boundaries panel and cited when a scenario turns on law, payer rules, or policy. */
 const BEYOND_NOTE = "The Code is not exhaustive. It defers to applicable laws and policies, so payer rules, privacy law, licensure requirements, and whistleblower protections are checked with your compliance office, your state board, or legal counsel. For hard calls, the Code points to ethics committees, organizational ethics officers or consultants, and the AOTA Ethics Commission.";
+
+if (typeof module === "object" && module.exports) module.exports = { PRINCIPLES, VALUES, SECTIONS, STD, BEYOND_NOTE };

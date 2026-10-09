@@ -1,0 +1,70 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ethics Case Facilitator (Scripted)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap">
+<link rel="stylesheet" href="style.css">
+
+<div class="app" id="app" data-tab="chat">
+  <header>
+    <div class="brand">
+      <h1>Ethics Case Facilitator</h1>
+      <span id="sub">AOTA 2025 Code of Ethics</span>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress" id="progress" aria-label="Case progress"></div>
+      <div class="tools">
+        <button class="btn" id="btnLib" type="button">Case library</button>
+        <button class="btn" id="btnCode" type="button">Code reference</button>
+      </div>
+    </div>
+  </header>
+  <div class="tabs" id="tabs" role="tablist">
+    <button class="btn" role="tab" id="tabChat" aria-selected="true" type="button">Conversation</button>
+    <button class="btn" role="tab" id="tabFile" aria-selected="false" type="button">Case file</button>
+  </div>
+
+  <div class="library" id="library"></div>
+
+  <div class="main" id="main" hidden>
+    <div class="chat">
+      <div class="stream" id="stream" aria-live="polite"></div>
+      <form class="composer" id="composer" autocomplete="off">
+        <input id="free" type="text" placeholder="Add your reasoning, or look up a standard (e.g. 4G)" aria-label="Your message">
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+      <div class="hint">The facilitator only works from the 2025 Code. Type a standard number such as 6A, a Principle such as Veracity, or a Core Value such as Equity to see its exact wording.</div>
+    </div>
+    <aside class="side" id="side">
+      <section>
+        <h2>Case file</h2>
+        <ul class="facts" id="facts"><li class="empty">Nothing revealed yet.</li></ul>
+      </section>
+      <section>
+        <h2>Code anchors touched</h2>
+        <div class="chips" id="anchors"><span class="empty">None yet.</span></div>
+      </section>
+      <section class="rules">
+        <h2>Boundaries</h2>
+        <p>Feedback cites only the Principles, Core Values, and Standards of Conduct in the 2025 Code.</p>
+        <p id="beyondNote"></p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Code reference">
+    <header>
+      <div class="brand"><h1>AOTA 2025 Occupational Therapy Code of Ethics</h1><span>Wording as published. Shown here are the Principles, Core Values, and the Standards these cases use.</span></div>
+      <button class="btn" id="btnClose" type="button">Close</button>
+    </header>
+    <div class="body" id="codeBody"></div>
+  </div>
+</div>
+
+<script src="code.js"></script>
+<script src="cases.js"></script>
+<script src="app.js"></script>
