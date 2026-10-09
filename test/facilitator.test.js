@@ -204,3 +204,13 @@ test("selftest makes one rate-limited model call and reports the model", async (
   const r = await call(h, { op: "selftest" });
   assert.deepEqual(r.body, { ok: true, model: "claude-test" });
 });
+
+test("a workspace-scoping error gets its own code", () => {
+  const { translateUpstream } = require("../api/facilitate.js");
+  const quiet = console.error; console.error = () => {};
+  try {
+    const e = translateUpstream({ status: 400, message: "400 This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header" }, {});
+    assert.equal(e.error, "upstream_workspace"); assert.equal(e.detail, undefined);
+    assert.equal(translateUpstream({ status: 400, message: "bad effort" }, {}).error, "upstream_bad_request");
+  } finally { console.error = quiet; }
+});

@@ -39,6 +39,7 @@ npm test
    - `ANTHROPIC_API_KEY` (required)
    - `ANTHROPIC_MODEL` (optional, default `claude-opus-5-5`)
    - `ACCESS_CODE` (optional but recommended for a public URL; visitors must enter it before the facilitator answers)
+   - `ANTHROPIC_WORKSPACE_ID` (only if the API says your key "is not scoped to a workspace"; use a workspace-scoped key instead if you can)
    - `PROGRESS_SECRET` (optional; signs stage tokens; defaults to a key derived from `ANTHROPIC_API_KEY`. If the key is rotated, in-progress cases must be restarted.)
 3. Redeploy so the variables take effect.
 

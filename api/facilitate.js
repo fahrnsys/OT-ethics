@@ -10,6 +10,7 @@
  * Progress gate: stage 0 is open. Stage N needs a token that this function signed when the participant's answer to
  * stage N-1 was assessed, so the later stages of a case cannot be read by calling the API out of order.
  * Environment: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (optional), ACCESS_CODE (optional),
+ *              ANTHROPIC_WORKSPACE_ID (only for keys that are not scoped to a workspace), DEBUG_ERRORS=1 (optional),
  *              PROGRESS_SECRET (optional; defaults to a key derived from ANTHROPIC_API_KEY). */
 
 const crypto = require("crypto");
@@ -39,6 +40,7 @@ function translateUpstream(e, env) {
   if (s === 401) { code = "upstream_auth"; msg = "The server's Anthropic API key was rejected."; }
   else if (s === 403) { code = "upstream_forbidden"; msg = "The server's API key is not allowed to use this model."; }
   else if (s === 404) { code = "upstream_model"; msg = "The configured model was not found for this key."; }
+  else if (s === 400 && /workspace/i.test(raw)) { code = "upstream_workspace"; msg = "The server's API key is not tied to a workspace."; }
   else if (s === 400) { code = "upstream_bad_request"; msg = "The model service rejected the request."; }
   else if (s === 429) { code = "upstream_rate"; msg = "The model service is rate limiting this key."; }
   else if (s >= 500 || s === 529) { code = "upstream_busy"; msg = "The model service is busy or unavailable."; }
@@ -59,7 +61,9 @@ function makeAnthropicAsk(env) {
     if (!client) {
       const mod = require("@anthropic-ai/sdk");
       Anthropic = mod.default || mod;
-      client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 55000 });
+      /* a key that is not scoped to a workspace must say which workspace to use */
+      const defaultHeaders = env.ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": String(env.ANTHROPIC_WORKSPACE_ID).trim() } : undefined;
+      client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 55000, defaultHeaders });
     }
     const base = {
       model, max_tokens: kind === "answer" ? 4000 : 2500,

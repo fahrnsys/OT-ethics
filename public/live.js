@@ -98,6 +98,7 @@ function friendly(e) {
   if (c === "sample_not_granted" || c === "sample_sampling_disabled" || c === "sample_capability_disabled") return "Claude is not available for this view, so the live facilitator cannot answer.";
   if (c === "upstream_auth") return "The facilitator's connection to Claude was rejected. The site owner needs to check the ANTHROPIC_API_KEY in Vercel (error: upstream_auth).";
   if (c === "upstream_forbidden") return "This key is not allowed to use the configured model. The site owner needs to check ANTHROPIC_API_KEY or ANTHROPIC_MODEL (error: upstream_forbidden).";
+  if (c === "upstream_workspace") return "The facilitator's API key is not tied to a workspace. The site owner can run the connection check at /check.html for the two ways to fix it (error: upstream_workspace).";
   if (c === "upstream_model") return "The configured model was not found for this key. The site owner can set ANTHROPIC_MODEL to a model the key can use (error: upstream_model).";
   if (c === "upstream_bad_request") return "Claude rejected the request. The site owner can check the Vercel function logs (error: upstream_bad_request).";
   if (c === "upstream_rate" || c === "upstream_busy") return "Claude is busy right now. Please wait a moment and send your answer again.";
